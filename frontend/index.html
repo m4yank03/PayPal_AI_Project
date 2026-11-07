@@ -1,0 +1,1333 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TrustPay AI — Workspace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.3.0/dist/ag-grid-community.min.js"></script>
+
+<style>
+:root {
+  --navy:#0d172a;
+  --navy2:#15233b;
+  --mint:#64dfc3;
+  --blue:#476df5;
+  --ink:#18243a;
+  --muted:#7c899d;
+  --line:#e8edf4;
+  --bg:#f6f8fc;
+}
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+body {
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:"DM Sans",sans-serif;
+}
+button,input,textarea,select { font:inherit; }
+button { cursor:pointer; }
+.app {
+  display:grid;
+  grid-template-columns:245px minmax(0,1fr);
+  min-height:100vh;
+}
+.sidebar {
+  background:var(--navy);
+  color:white;
+  padding:30px 18px;
+  display:flex;
+  flex-direction:column;
+  gap:35px;
+  position:sticky;
+  top:0;
+  height:100vh;
+}
+.brand {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:0 12px;
+}
+.brand-icon {
+  width:42px;
+  height:42px;
+  border-radius:13px;
+  display:grid;
+  place-items:center;
+  background:linear-gradient(145deg,#7ff5d1,#35b9b9);
+  color:#102c39;
+  font-size:23px;
+  font-weight:800;
+}
+.brand strong {
+  font-family:Manrope,sans-serif;
+  font-size:20px;
+  letter-spacing:-1px;
+}
+.brand strong span { color:var(--mint); }
+.brand small {
+  display:block;
+  font-size:9px;
+  letter-spacing:1.8px;
+  color:#8190ab;
+  margin-top:4px;
+}
+.nav-caption {
+  padding:0 14px;
+  color:#687a98;
+  letter-spacing:1.7px;
+  font-size:10px;
+  font-weight:800;
+}
+.nav {
+  display:grid;
+  gap:7px;
+}
+.nav a {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:13px 14px;
+  border-radius:11px;
+  text-decoration:none;
+  color:#9baac1;
+  font-size:13px;
+  font-weight:600;
+  transition:.2s;
+}
+.nav a:hover,.nav a.active {
+  color:#fff;
+  background:#1d304b;
+}
+.nav a.active { border-left:3px solid var(--mint); }
+.nav .symbol { font-size:18px; width:23px; }
+.sidebar-bottom {
+  margin-top:auto;
+  background:#192b43;
+  border:1px solid #29405c;
+  padding:17px;
+  border-radius:15px;
+}
+.sidebar-bottom b { font-size:12px; }
+.sidebar-bottom p {
+  color:#9daec4;
+  font-size:11px;
+  line-height:1.6;
+}
+.status-dot {
+  display:inline-block;
+  height:7px;
+  width:7px;
+  background:var(--mint);
+  border-radius:50%;
+  margin-right:7px;
+}
+.workspace { min-width:0; }
+.topbar {
+  background:#fff;
+  border-bottom:1px solid var(--line);
+  padding:20px 36px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.breadcrumb { color:#8793a7; font-size:12px; }
+.breadcrumb strong { color:#253650; }
+.top-right { display:flex; align-items:center; gap:13px; }
+.sandbox {
+  font-size:11px;
+  font-weight:700;
+  color:#278f73;
+  background:#eafaf4;
+  padding:9px 13px;
+  border-radius:24px;
+}
+.avatar {
+  width:36px;
+  height:36px;
+  border-radius:11px;
+  background:#eaf0ff;
+  color:#4363bf;
+  display:grid;
+  place-items:center;
+  font-weight:800;
+}
+.content {
+  max-width:1510px;
+  margin:auto;
+  padding:30px 36px 60px;
+}
+.hero {
+  border-radius:24px;
+  padding:37px 40px;
+  background:linear-gradient(115deg,#132440,#192d4a 70%,#174c58);
+  color:#fff;
+  display:grid;
+  grid-template-columns:1.3fr 1fr;
+  align-items:center;
+  gap:20px;
+  position:relative;
+  overflow:hidden;
+  min-height:250px;
+}
+.hero:after {
+  content:"";
+  position:absolute;
+  width:340px;height:340px;
+  border:1px solid #ffffff16;
+  border-radius:50%;
+  right:-110px;top:-110px;
+  box-shadow:0 0 0 55px #ffffff06,0 0 0 110px #ffffff04;
+}
+.eyebrow {
+  color:#84efd1;
+  font-size:10px;
+  letter-spacing:2.3px;
+  font-weight:800;
+  text-transform:uppercase;
+}
+.hero h1 {
+  font:800 clamp(27px,3vw,38px)/1.2 Manrope,sans-serif;
+  letter-spacing:-1.5px;
+  max-width:570px;
+  margin:13px 0;
+}
+.hero p {
+  color:#b8c8da;
+  font-size:13px;
+  line-height:1.8;
+  max-width:480px;
+}
+.hero-actions { display:flex;gap:10px;margin-top:23px; }
+.btn {
+  display:inline-flex;
+  justify-content:center;
+  align-items:center;
+  gap:8px;
+  border:0;
+  border-radius:10px;
+  font-weight:700;
+  font-size:12px;
+  padding:12px 17px;
+  transition:transform .2s,background .2s,box-shadow .2s;
+}
+.btn:hover:not(:disabled) { transform:translateY(-2px); }
+.btn:disabled { opacity:.45;cursor:not-allowed; }
+.btn-primary { background:var(--blue);color:#fff; }
+.btn-primary:hover { background:#3558d8; }
+.btn-mint { background:var(--mint);color:#102b36; }
+.btn-soft { background:#eaf0ff;color:#385fc9; }
+.btn-outline {
+  border:1px solid #ffffff4a;
+  color:white;
+  background:#ffffff12;
+}
+.btn-full { width:100%; }
+.hero-visual {
+  display:grid;
+  gap:11px;
+  position:relative;
+  z-index:1;
+  max-width:320px;
+  margin-left:auto;
+  width:100%;
+}
+.flow-item {
+  display:flex;
+  align-items:center;
+  gap:13px;
+  background:#ffffff14;
+  border:1px solid #ffffff21;
+  border-radius:13px;
+  padding:13px;
+  backdrop-filter:blur(9px);
+}
+.flow-icon {
+  background:#ffffff19;
+  border-radius:10px;
+  width:36px;height:36px;
+  display:grid;place-items:center;
+}
+.flow-item b { display:block;font-size:12px; }
+.flow-item small { color:#a9bed4;font-size:10px; }
+.flow-item.done .flow-icon { background:#2a6d67;color:#9af8df; }
+.stats {
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:16px;
+  margin:23px 0;
+}
+.stat {
+  background:white;
+  border:1px solid var(--line);
+  padding:21px;
+  border-radius:16px;
+  box-shadow:0 5px 22px #1f325006;
+}
+.stat-head {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+.stat-icon {
+  width:36px;height:36px;
+  border-radius:10px;
+  background:#eef2ff;
+  color:#4f6cf5;
+  display:grid;place-items:center;
+  font-size:18px;
+}
+.stat-label { font-size:11px;color:var(--muted);font-weight:700; }
+.stat-value {
+  font:800 27px Manrope,sans-serif;
+  letter-spacing:-1px;
+  margin:13px 0 5px;
+}
+.stat-foot { color:#92a0b0;font-size:10px; }
+.section-title {
+  font:800 18px Manrope,sans-serif;
+  letter-spacing:-.6px;
+  margin:0;
+}
+.section-subtitle {
+  font-size:12px;
+  color:var(--muted);
+  margin:7px 0 0;
+  line-height:1.6;
+}
+.layout {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 345px;
+  gap:20px;
+  align-items:start;
+}
+.column { display:grid;gap:20px;min-width:0; }
+.panel {
+  background:white;
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:23px;
+  min-width:0;
+  box-shadow:0 6px 20px #172e5105;
+}
+.panel-top {
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:14px;
+  margin-bottom:20px;
+}
+.toolbar {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  flex-wrap:wrap;
+  margin:17px 0;
+}
+input,select,textarea {
+  width:100%;
+  border:1px solid #e1e7ef;
+  background:#f9fbfe;
+  border-radius:10px;
+  padding:12px 13px;
+  color:var(--ink);
+  font-size:12px;
+  outline:none;
+  transition:border-color .2s,box-shadow .2s;
+}
+input:focus,select:focus,textarea:focus {
+  border-color:#7b99fc;
+  box-shadow:0 0 0 3px #547bff12;
+}
+textarea { min-height:105px;resize:vertical;line-height:1.6; }
+label {
+  display:block;
+  margin:14px 0 7px;
+  font-size:11px;
+  color:#53617a;
+  font-weight:700;
+}
+.toolbar input { flex:1;min-width:155px; }
+.toolbar select { width:150px; }
+.toolbar button { white-space:nowrap; }
+#milestoneGrid { height:365px;width:100%; }
+.status {
+  display:inline-flex;
+  align-items:center;
+  padding:5px 11px;
+  border-radius:20px;
+  font-size:11px;
+  font-weight:800;
+  text-transform:capitalize;
+}
+.status-paid { background:#e5f8ef;color:#15845a; }
+.status-approved { background:#e8efff;color:#4165cd; }
+.status-pending { background:#fff5e3;color:#ab771f; }
+.selected-empty {
+  padding:25px;
+  text-align:center;
+  color:#91a0b4;
+  font-size:12px;
+  background:#f8fafd;
+  border-radius:12px;
+}
+.detail-heading {
+  font:800 17px Manrope,sans-serif;
+  margin:0 0 8px;
+}
+.detail-description { color:#718097;font-size:12px;line-height:1.8; }
+.criteria-list { padding-left:19px;color:#50617a;font-size:12px;line-height:1.8; }
+.criteria-list li { margin:6px 0; }
+.detail-top {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:14px;
+}
+.amount { font:800 20px Manrope,sans-serif;color:#274c98; }
+.review-card {
+  background:#f8faff;
+  border:1px solid #e9eff8;
+  padding:16px;
+  border-radius:12px;
+  margin-top:12px;
+}
+.review-card p { color:#64748b;font-size:12px;line-height:1.75; }
+.review-card h4 { font-size:12px;margin:0 0 8px; }
+.review-criterion {
+  border-top:1px solid #e3eaf4;
+  margin-top:12px;
+  padding-top:12px;
+  font-size:11px;
+  line-height:1.7;
+  color:#52617b;
+}
+.progress-track {
+  height:9px;
+  background:#edf2f9;
+  border-radius:20px;
+  overflow:hidden;
+  margin:15px 0 7px;
+}
+.progress-fill {
+  width:0;
+  height:100%;
+  background:linear-gradient(90deg,#3a73ee,#55dfb9);
+  border-radius:20px;
+  transition:width .5s;
+}
+.progress-caption {
+  display:flex;
+  justify-content:space-between;
+  color:#8290a3;
+  font-size:11px;
+}
+.notice {
+  display:none;
+  margin:0 0 18px;
+  border:1px solid #dbe6ff;
+  background:#edf3ff;
+  color:#3059b3;
+  border-radius:12px;
+  padding:14px 17px;
+  font-size:12px;
+  line-height:1.6;
+}
+.notice.error {
+  background:#fff0ef;
+  color:#b53532;
+  border-color:#ffd4d1;
+}
+.notice.visible { display:block; }
+.payment-actions { display:grid;gap:9px;margin-top:16px; }
+.payment-link {
+  display:block;
+  text-align:center;
+  padding:12px;
+  border-radius:10px;
+  color:#2256bb;
+  background:#edf4ff;
+  text-decoration:none;
+  font-weight:800;
+  font-size:12px;
+}
+.payment-link[hidden] { display:none; }
+.mini-note {
+  color:#92a0b1;
+  font-size:10px;
+  line-height:1.7;
+  margin-top:13px;
+}
+.badge-ai {
+  font-size:10px;
+  font-weight:800;
+  color:#6850c1;
+  background:#f0ecff;
+  padding:7px 10px;
+  border-radius:20px;
+  white-space:nowrap;
+}
+@media(max-width:1200px) {
+  .layout { grid-template-columns:1fr; }
+  .stats { grid-template-columns:repeat(2,1fr); }
+}
+@media(max-width:850px) {
+  .app { grid-template-columns:1fr; }
+  .sidebar {
+    position:relative;
+    height:auto;
+    padding:14px 18px;
+    gap:14px;
+  }
+  .sidebar-bottom,.nav-caption { display:none; }
+  .nav { display:flex;overflow:auto; }
+  .nav a { white-space:nowrap;font-size:11px; }
+  .topbar { padding:17px 20px; }
+  .content { padding:20px; }
+  .hero { grid-template-columns:1fr;padding:28px; }
+  .hero-visual { margin:15px 0 0;max-width:none; }
+}
+@media(max-width:520px) {
+  .stats { grid-template-columns:repeat(2,minmax(0,1fr));gap:10px; }
+  .stat { padding:15px; }
+  .stat-value { font-size:23px; }
+  .hero h1 { font-size:27px; }
+  .panel { padding:17px; }
+  .sandbox { display:none; }
+}
+@media(prefers-reduced-motion:reduce) {
+  *,*:before,*:after {
+    animation:none!important;
+    transition:none!important;
+  }
+}
+/* Compact hero */
+.hero {
+  min-height: 205px;
+  padding: 26px 32px;
+}
+.hero h1 {
+  font-size: clamp(25px, 2.4vw, 32px);
+}
+.hero-visual {
+  gap: 7px;
+}
+.flow-item {
+  padding: 10px;
+}
+
+/* AI status pills */
+.review-chip {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.review-chip.ready {
+  background: #e4f8f0;
+  color: #148560;
+}
+.review-chip.warning {
+  background: #fff3df;
+  color: #a56c11;
+}
+.review-chip.neutral {
+  background: #edf1f7;
+  color: #69798f;
+}
+</style>
+</head>
+
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">◆</div>
+      <div>
+        <strong>trustpay<span>.ai</span></strong>
+        <small>SMART PAYMENTS</small>
+      </div>
+    </div>
+
+    <div>
+      <p class="nav-caption">WORKSPACE</p>
+      <nav class="nav">
+        <a href="#overview" class="active">
+          <span class="symbol">◈</span> Overview
+        </a>
+        <a href="#milestones">
+          <span class="symbol">▤</span> Milestones
+        </a>
+        <a href="#ai-tools">
+          <span class="symbol">✧</span> AI Workspace
+        </a>
+        <a href="#payments">
+          <span class="symbol">◇</span> Payments
+        </a>
+      </nav>
+    </div>
+
+    <div class="sidebar-bottom">
+      <b><span class="status-dot"></span> Sandbox Environment</b>
+      <p>Build, verify and simulate payments safely. No real money transfers.</p>
+      <span style="font-size:10px;color:#72ddc3">Powered by PayPal + Gemini</span>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <div class="breadcrumb">
+        Workspace / <strong>Overview</strong>
+      </div>
+      <div class="top-right">
+        <span class="sandbox">● Sandbox Active</span>
+        <div class="avatar">TP</div>
+      </div>
+    </header>
+
+    <main class="content">
+
+      <section class="hero" id="overview">
+        <div>
+          <div class="eyebrow">AI-POWERED FREELANCE PAYMENTS</div>
+          <h1>Great work deserves a clear path to payment.</h1>
+          <p>
+            Turn project requirements into smart milestones,
+            review deliverables with AI, and manage payments
+            using PayPal Sandbox.
+          </p>
+          <div class="hero-actions">
+            <button class="btn btn-mint"
+              onclick="document.getElementById('createProject').scrollIntoView()">
+              + New Project
+            </button>
+            <button class="btn btn-outline"
+              onclick="document.getElementById('milestones').scrollIntoView()">
+              View Milestones →
+            </button>
+          </div>
+        </div>
+
+        <div class="hero-visual">
+          <div class="flow-item done">
+            <div class="flow-icon">✧</div>
+            <div>
+              <b>AI Milestone Planning</b>
+              <small>Clear deliverables and budgets</small>
+            </div>
+          </div>
+          <div class="flow-item done">
+            <div class="flow-icon">✓</div>
+            <div>
+              <b>Intelligent Work Review</b>
+              <small>Evidence-based recommendations</small>
+            </div>
+          </div>
+          <div class="flow-item">
+            <div class="flow-icon">↗</div>
+            <div>
+              <b>PayPal Checkout</b>
+              <small>Verified Sandbox transactions</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div id="notice" class="notice" role="status"></div>
+
+      <section class="stats">
+        <div class="stat">
+          <div class="stat-head">
+            <span class="stat-label">TOTAL PROJECTS</span>
+            <span class="stat-icon">▣</span>
+          </div>
+          <div class="stat-value" id="projectCount">0</div>
+          <div class="stat-foot">Projects in your workspace</div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-head">
+            <span class="stat-label">MILESTONES</span>
+            <span class="stat-icon">▤</span>
+          </div>
+          <div class="stat-value" id="total">0</div>
+          <div class="stat-foot">Selected project</div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-head">
+            <span class="stat-label">AWAITING PAYMENT</span>
+            <span class="stat-icon">◷</span>
+          </div>
+          <div class="stat-value" id="pending">0</div>
+          <div class="stat-foot">Pending or approved</div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-head">
+            <span class="stat-label">SANDBOX PAID</span>
+            <span class="stat-icon">↗</span>
+          </div>
+          <div class="stat-value" id="paidAmount">$0</div>
+          <div class="stat-foot"><span id="paid">0</span> completed payments</div>
+        </div>
+      </section>
+
+      <div class="layout">
+        <div class="column">
+
+          <section class="panel" id="milestones">
+            <div class="panel-top">
+              <div>
+                <h2 class="section-title">Milestone Command Center</h2>
+                <p class="section-subtitle">
+                  Monitor deliverables and payment progress in one place.
+                </p>
+              </div>
+              <span class="badge-ai">AG Grid</span>
+            </div>
+
+            <label for="projectSelect">ACTIVE PROJECT</label>
+            <select id="projectSelect"></select>
+
+            <div class="toolbar">
+              <input id="search" placeholder="⌕ Search milestones...">
+              <select id="statusFilter" aria-label="Filter by status">
+                <option value="all">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="paid">Paid</option>
+              </select>
+              <button class="btn btn-soft" id="exportBtn">
+                ↓ CSV
+              </button>
+            </div>
+
+            <div id="milestoneGrid"></div>
+
+            <div style="margin-top:20px">
+              <div class="progress-caption">
+                <strong>Payment completion</strong>
+                <span id="progressText">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="progressFill" class="progress-fill"></div>
+              </div>
+              <p class="mini-note">
+                Based on verified Sandbox payments in this project.
+              </p>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-top">
+              <div>
+                <h2 class="section-title">Milestone Details</h2>
+                <p class="section-subtitle">
+                  Select a row to inspect deliverables and acceptance criteria.
+                </p>
+              </div>
+            </div>
+            <div id="details" class="selected-empty">
+              Select a milestone from the table.
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-top">
+              <div>
+                <h2 class="section-title">AI Review Intelligence</h2>
+                <p class="section-subtitle">
+                  Evidence analysis and explainable recommendations.
+                </p>
+              </div>
+              <span class="badge-ai">✧ Gemini AI</span>
+            </div>
+            <div id="reviewResult" class="selected-empty">
+              Select a milestone to view its AI review.
+            </div>
+          </section>
+
+        </div>
+
+        <div class="column" id="ai-tools">
+
+          <section class="panel" id="createProject">
+            <div class="panel-top">
+              <div>
+                <h2 class="section-title">Create Project</h2>
+                <p class="section-subtitle">Define your next collaboration.</p>
+              </div>
+            </div>
+
+            <form id="projectForm">
+              <label>PROJECT TITLE</label>
+              <input name="title" required minlength="3"
+                placeholder="e.g. Portfolio Website">
+
+              <label>PROJECT REQUIREMENTS</label>
+              <textarea name="description" required minlength="10"
+                placeholder="Describe the project and expected deliverables..."></textarea>
+
+              <label>TOTAL BUDGET (USD)</label>
+              <input name="budget_usd" type="number"
+                min="0.03" step="0.01" required placeholder="300">
+
+              <button type="submit" class="btn btn-primary btn-full"
+                style="margin-top:16px">
+                + Create Project
+              </button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-top">
+              <div>
+                <h2 class="section-title">AI Milestone Planner</h2>
+                <p class="section-subtitle">
+                  Generate structured project plans in seconds.
+                </p>
+              </div>
+              <span class="badge-ai">✧ AI</span>
+            </div>
+            <button id="generateBtn" class="btn btn-primary btn-full">
+              ✧ Generate with Gemini AI
+            </button>
+            <p class="mini-note">
+              Creates three milestones with budget allocations,
+              deliverables and acceptance criteria.
+            </p>
+          </section>
+
+          <section class="panel">
+            <div class="panel-top">
+              <div>
+                <h2 class="section-title">Submit Work</h2>
+                <p class="section-subtitle">
+                  AI compares evidence against the selected milestone.
+                </p>
+              </div>
+            </div>
+
+            <form id="reviewForm">
+              <label>FREELANCER EVIDENCE</label>
+              <textarea id="evidence" required minlength="30"
+                placeholder="What work was completed? Include supporting details..."></textarea>
+
+              <button type="submit" class="btn btn-primary btn-full"
+                style="margin-top:14px">
+                ✧ Run AI Review
+              </button>
+            </form>
+          </section>
+
+          <section class="panel" id="payments">
+            <div class="panel-top">
+              <div>
+                <h2 class="section-title">Payment Center</h2>
+                <p class="section-subtitle">
+                  Client approval and secure Sandbox testing.
+                </p>
+              </div>
+            </div>
+
+            <div class="payment-actions">
+              <button id="approveBtn" class="btn btn-soft">
+                ✓ Approve Milestone
+              </button>
+              <button id="checkoutBtn" class="btn btn-primary">
+                Create PayPal Checkout
+              </button>
+
+              <a id="approvalLink" class="payment-link"
+                target="_blank" rel="noopener" hidden>
+                ↗ Open PayPal Sandbox Checkout
+              </a>
+
+              <button id="captureBtn" class="btn btn-mint">
+                ✓ Verify & Capture Payment
+              </button>
+            </div>
+
+            <p class="mini-note">
+              Demo environment only. AI cannot approve payments.
+              Payment status changes after PayPal verification.
+            </p>
+          </section>
+
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+let selectedMilestone = null;
+let milestones = [];
+let gridApi = null;
+
+const $ = id => document.getElementById(id);
+const money = value => "$" + Number(value || 0).toFixed(2);
+
+function element(tag, className = "", content = "") {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  el.textContent = content;
+  return el;
+}
+
+function statusBadge(status) {
+  const value = ["pending","approved","paid"].includes(status)
+    ? status : "pending";
+  return element("span", "status status-" + value, value);
+}
+
+function notify(message, error = false) {
+  const notice = $("notice");
+  notice.textContent = message;
+  notice.classList.add("visible");
+  notice.classList.toggle("error", error);
+}
+
+async function api(path, method = "GET", body = null) {
+  const response = await fetch(path, {
+    method,
+    headers: {"Content-Type":"application/json"},
+    ...(body !== null ? {body:JSON.stringify(body)} : {})
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      response.status + ": " +
+      (typeof data.detail === "string" ? data.detail : "Request failed")
+    );
+  }
+  return data;
+}
+
+async function run(action, success = "Operation completed successfully.") {
+  try {
+    notify("Processing request...");
+    await action();
+    notify(success);
+  } catch (err) {
+    notify(err.message, true);
+  }
+}
+
+function initGrid() {
+  if (!window.agGrid) throw new Error("AG Grid failed to load.");
+
+  const options = {
+    columnDefs: [
+      {
+        field:"title",
+        headerName:"Milestone",
+        flex:2,
+        minWidth:210
+      },
+      {
+        field:"amount_usd",
+        headerName:"Amount",
+        minWidth:112,
+        valueFormatter:p => money(p.value)
+      },
+      {
+        field:"percentage",
+        headerName:"Budget %",
+        minWidth:105,
+        valueFormatter:p => p.value + "%"
+      },
+
+{
+  field:"status",
+  headerName:"Status",
+  minWidth:120,
+  cellRenderer:p => statusBadge(p.value)
+},
+{
+  field:"review_status",
+  headerName:"AI Review",
+  minWidth:175,
+  cellRenderer:p => {
+    const states = {
+      send_to_client: ["Ready for client", "ready"],
+      request_more_evidence: ["Needs evidence", "warning"],
+      needs_revision: ["Needs revision", "warning"],
+      not_reviewed: ["Not reviewed", "neutral"],
+      unavailable: ["Unavailable", "neutral"]
+    };
+
+    const [label, style] =
+      states[p.value] || ["Unknown", "neutral"];
+
+    return element("span", "review-chip " + style, label);
+  }
+}
+
+    ],
+    defaultColDef:{
+      sortable:true,
+      filter:true,
+      resizable:true
+    },
+    rowData:[],
+    rowHeight:54,
+    headerHeight:47,
+    pagination:true,
+    paginationPageSize:10,
+    onRowClicked:event => {
+      selectedMilestone = event.data;
+      renderDetails();
+      loadReviews().catch(err => notify(err.message,true));
+    }
+  };
+
+  if (agGrid.themeQuartz) {
+    options.theme = agGrid.themeQuartz.withParams({
+      accentColor:"#476df5",
+      backgroundColor:"#ffffff",
+      foregroundColor:"#24344e",
+      headerBackgroundColor:"#f7f9fd",
+      headerTextColor:"#6c7c91",
+      borderColor:"#e8edf4",
+      fontFamily:"DM Sans, sans-serif",
+      fontSize:12,
+      spacing:8
+    });
+  }
+
+  gridApi = agGrid.createGrid($("milestoneGrid"), options);
+}
+
+function updateGrid() {
+  const filter = $("statusFilter").value;
+  const rows = milestones.filter(
+    m => filter === "all" || m.status === filter
+  );
+  gridApi.setGridOption("rowData", rows);
+}
+
+function updateStats() {
+  $("total").textContent = milestones.length;
+
+  const pending = milestones.filter(m => m.status !== "paid");
+  const paid = milestones.filter(m => m.status === "paid");
+
+  $("pending").textContent = pending.length;
+  $("paid").textContent = paid.length;
+
+  const paidAmount = paid.reduce(
+    (sum,m) => sum + Number(m.amount_usd), 0
+  );
+  const budget = milestones.reduce(
+    (sum,m) => sum + Number(m.amount_usd), 0
+  );
+
+  $("paidAmount").textContent = money(paidAmount);
+
+  const percent = budget
+    ? Math.round(paidAmount / budget * 100)
+    : 0;
+
+  $("progressFill").style.width = percent + "%";
+  $("progressText").textContent = percent + "%";
+}
+
+async function loadProjects(preferredId = null) {
+  const projects = await api("/api/projects");
+  $("projectCount").textContent = projects.length;
+
+  const select = $("projectSelect");
+  const previous = preferredId ?? Number(select.value || 0);
+  select.replaceChildren();
+
+  for (const project of projects) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = "#" + project.id + " — " + project.title;
+    select.appendChild(option);
+  }
+
+  if (projects.some(p => p.id === Number(previous))) {
+    select.value = String(previous);
+  }
+
+  await loadMilestones();
+}
+
+async function loadMilestones() {
+  const projectId = $("projectSelect").value;
+
+const rows = projectId
+  ? await api("/api/projects/" + projectId + "/milestones")
+  : [];
+
+milestones = await Promise.all(
+  rows.map(async milestone => {
+    try {
+      const reviews = await api(
+        "/api/milestones/" + milestone.id + "/reviews"
+      );
+
+      return {
+        ...milestone,
+        review_status:
+          reviews[0]?.recommendation || "not_reviewed"
+      };
+    } catch {
+      return {
+        ...milestone,
+        review_status: "unavailable"
+      };
+    }
+  })
+);
+
+  updateGrid();
+  updateStats();
+
+  const oldId = selectedMilestone?.id;
+  selectedMilestone =
+    milestones.find(m => m.id === oldId) ||
+    milestones[0] || null;
+
+  $("approvalLink").hidden = true;
+
+  renderDetails();
+  await loadReviews();
+}
+
+function renderDetails() {
+  const target = $("details");
+  target.replaceChildren();
+
+  const m = selectedMilestone;
+
+  $("approveBtn").disabled = !m || m.status !== "pending";
+  $("checkoutBtn").disabled = !m || m.status !== "approved";
+  $("captureBtn").disabled = !m || m.status !== "approved";
+
+  if (!m) {
+    target.className = "selected-empty";
+    target.textContent = "Select a milestone from the table.";
+    return;
+  }
+
+  target.className = "";
+
+  const top = element("div","detail-top");
+  top.append(
+    element("div","amount",money(m.amount_usd)),
+    statusBadge(m.status)
+  );
+
+  const heading = element("h3","detail-heading",m.title);
+  const description = element(
+    "p","detail-description",m.description
+  );
+
+  const criteriaHeading = element(
+    "strong","","Acceptance Criteria"
+  );
+
+  const list = element("ul","criteria-list");
+  for (const criterion of m.acceptance_criteria) {
+    list.appendChild(element("li","",criterion));
+  }
+
+  target.append(top,heading,description,criteriaHeading,list);
+}
+
+async function loadReviews() {
+  const target = $("reviewResult");
+  target.replaceChildren();
+
+  if (!selectedMilestone) {
+    target.textContent = "No milestone selected.";
+    return;
+  }
+
+  const id = selectedMilestone.id;
+  const reviews = await api("/api/milestones/" + id + "/reviews");
+
+  if (selectedMilestone?.id !== id) return;
+
+  if (!reviews.length) {
+    target.textContent = "No AI review yet. Submit work to begin.";
+    return;
+  }
+
+  const review = reviews[0];
+  const card = element("div","review-card");
+
+  card.appendChild(element(
+    "h4","",
+    "AI Recommendation: " +
+      review.recommendation.replaceAll("_"," ")
+  ));
+  card.appendChild(element("p","",review.summary));
+
+  for (const result of review.criteria_results) {
+    card.appendChild(element(
+      "div","review-criterion",
+      "Criterion " + result.criterion_number +
+      " · " + result.status.replaceAll("_"," ") +
+      "\n" + result.explanation
+    ));
+  }
+
+  target.appendChild(card);
+}
+
+$("projectSelect").addEventListener("change", () =>
+  run(loadMilestones,"Project loaded.")
+);
+
+$("statusFilter").addEventListener("change",updateGrid);
+
+$("search").addEventListener("input", event => {
+  gridApi.setGridOption("quickFilterText",event.target.value);
+});
+
+$("exportBtn").addEventListener("click",() => {
+  if (!gridApi) return;
+  gridApi.exportDataAsCsv({
+    fileName:"trustpay-milestones.csv"
+  });
+});
+
+$("projectForm").addEventListener("submit",event => {
+  event.preventDefault();
+  run(async () => {
+    const data = new FormData(event.target);
+
+    const project = await api("/api/projects","POST",{
+      title:data.get("title"),
+      description:data.get("description"),
+      budget_usd:Number(data.get("budget_usd"))
+    });
+
+    event.target.reset();
+    await loadProjects(project.id);
+  },"Project created successfully.");
+});
+
+$("generateBtn").addEventListener("click",() => {
+  run(async () => {
+    const id = $("projectSelect").value;
+    if (!id) throw new Error("Create a project first.");
+
+    await api(
+      "/api/projects/" + id + "/generate-milestones",
+      "POST"
+    );
+
+    await loadMilestones();
+  },"AI milestones generated and saved.");
+});
+
+$("reviewForm").addEventListener("submit",event => {
+  event.preventDefault();
+  run(async () => {
+    if (!selectedMilestone)
+      throw new Error("Select a milestone first.");
+
+    await api(
+      "/api/milestones/" + selectedMilestone.id + "/review",
+      "POST",
+      {evidence_text:$("evidence").value}
+    );
+
+    await loadMilestones();
+  },"AI work review completed and saved.");
+});
+
+$("approveBtn").addEventListener("click",() => {
+  run(async () => {
+    if (!selectedMilestone) return;
+
+    if (!confirm(
+      "Approve this milestone for Sandbox checkout?"
+    )) return;
+
+    await api(
+      "/api/milestones/" + selectedMilestone.id + "/approve",
+      "POST"
+    );
+
+    await loadMilestones();
+  },"Milestone approved for Sandbox payment.");
+});
+
+$("checkoutBtn").addEventListener("click",() => {
+  run(async () => {
+    if (!selectedMilestone) return;
+
+    const result = await api(
+      "/api/milestones/" + selectedMilestone.id + "/checkout",
+      "POST"
+    );
+
+    const url = new URL(result.approval_url);
+
+    if (
+      url.protocol !== "https:" ||
+      !(
+        url.hostname === "paypal.com" ||
+        url.hostname.endsWith(".paypal.com")
+      )
+    ) {
+      throw new Error("Unexpected PayPal checkout URL.");
+    }
+
+    const link = $("approvalLink");
+    link.href = url.href;
+    link.hidden = false;
+  },"Checkout ready. Open the PayPal link to approve payment.");
+});
+
+$("captureBtn").addEventListener("click",() => {
+  run(async () => {
+    if (!selectedMilestone) return;
+
+    if (!confirm(
+      "Has the Sandbox buyer approved the payment?"
+    )) return;
+
+    const result = await api(
+      "/api/milestones/" + selectedMilestone.id + "/capture",
+      "POST"
+    );
+
+    await loadMilestones();
+
+    notify("Payment verified! Capture ID: " + result.capture_id);
+  },"Sandbox payment captured and verified.");
+});
+
+async function start() {
+  try {
+    initGrid();
+    await loadProjects();
+    notify("TrustPay AI connected successfully.");
+  } catch (err) {
+    notify(err.message,true);
+  }
+}
+
+start();
+</script>
+</body>
+</html>
+
