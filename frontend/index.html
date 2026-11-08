@@ -865,6 +865,13 @@ label {
 
         </div>
       </div>
+<section class="panel" id="activity">
+  <h2 class="section-title">Payment Activity Timeline</h2>
+  <p class="section-subtitle">
+    Track approvals, checkouts and verified Sandbox payments.
+  </p>
+  <div id="activityLog">No activity recorded yet.</div>
+</section>
     </main>
   </div>
 </div>
@@ -897,10 +904,16 @@ function notify(message, error = false) {
   notice.classList.toggle("error", error);
 }
 
-async function api(path, method = "GET", body = null) {
+async function api(path, method = "GET", body = null, pin = null) {
+  const headers = {"Content-Type":"application/json"};
+
+  if (pin !== null) {
+    headers["X-Client-Pin"] = pin;
+  }
+
   const response = await fetch(path, {
     method,
-    headers: {"Content-Type":"application/json"},
+    headers,
     ...(body !== null ? {body:JSON.stringify(body)} : {})
   });
 
@@ -1106,6 +1119,7 @@ milestones = await Promise.all(
 
   renderDetails();
   await loadReviews();
+  await loadActivity();
 }
 
 function renderDetails() {
@@ -1260,6 +1274,8 @@ $("approveBtn").addEventListener("click",() => {
     if (!confirm(
       "Approve this milestone for Sandbox checkout?"
     )) return;
+    const pin = prompt("Enter Client Demo PIN:");
+if (pin === null) return;
 
     await api(
       "/api/milestones/" + selectedMilestone.id + "/approve",
@@ -1273,7 +1289,8 @@ $("approveBtn").addEventListener("click",() => {
 $("checkoutBtn").addEventListener("click",() => {
   run(async () => {
     if (!selectedMilestone) return;
-
+    const pin = prompt("Enter Client Demo PIN:");
+if (pin === null) return;
     const result = await api(
       "/api/milestones/" + selectedMilestone.id + "/checkout",
       "POST"
@@ -1294,6 +1311,7 @@ $("checkoutBtn").addEventListener("click",() => {
     const link = $("approvalLink");
     link.href = url.href;
     link.hidden = false;
+    await loadActivity();
   },"Checkout ready. Open the PayPal link to approve payment.");
 });
 
@@ -1304,7 +1322,8 @@ $("captureBtn").addEventListener("click",() => {
     if (!confirm(
       "Has the Sandbox buyer approved the payment?"
     )) return;
-
+    const pin = prompt("Enter Client Demo PIN:");
+if (pin === null) return;
     const result = await api(
       "/api/milestones/" + selectedMilestone.id + "/capture",
       "POST"
@@ -1315,6 +1334,58 @@ $("captureBtn").addEventListener("click",() => {
     notify("Payment verified! Capture ID: " + result.capture_id);
   },"Sandbox payment captured and verified.");
 });
+
+
+async function loadActivity() {
+  const target = $("activityLog");
+  target.replaceChildren();
+
+  const projectId = $("projectSelect").value;
+
+  if (!projectId) {
+    target.textContent = "Select a project.";
+    return;
+  }
+
+  const events = await api(
+    "/api/projects/" + projectId + "/activity"
+  );
+
+  if (!events.length) {
+    target.textContent = "No new activity recorded yet.";
+    return;
+  }
+
+  const labels = {
+    approved: "Milestone Approved",
+    checkout_created: "PayPal Checkout Created",
+    payment_captured: "Sandbox Payment Completed"
+  };
+
+  for (const event of events) {
+    const card = element("div", "review-card");
+
+    card.appendChild(element(
+      "h4", "",
+      labels[event.event_type] || event.event_type
+    ));
+
+    card.appendChild(element(
+      "p", "", event.milestone_title
+    ));
+
+    card.appendChild(element(
+      "p", "", event.details
+    ));
+
+    card.appendChild(element(
+      "small", "", event.created_at + " UTC"
+    ));
+
+    target.appendChild(card);
+  }
+}
+
 
 async function start() {
   try {

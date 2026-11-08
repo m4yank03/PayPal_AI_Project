@@ -1,7 +1,7 @@
 from pathlib import Path
 import sqlite3
 from contextlib import contextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
 import json
 from ai.milestone_generator import generate_milestones
@@ -13,6 +13,9 @@ from paypal.client import (
 )
 from fastapi.responses import HTMLResponse
 from fastapi.responses import FileResponse
+import os
+import secrets
+from fastapi import Header
 
 DB = Path(__file__).resolve().parent / 'trustpay.db'
 app = FastAPI(title='TrustPay AI', version='0.1.0')
@@ -84,6 +87,26 @@ with database() as db:
                 REFERENCES milestones(id)
         )
     """)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            milestone_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            details TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (milestone_id) REFERENCES milestones(id)
+        )
+    """)
+
+def record_activity(db, milestone_id, event_type, details):
+    db.execute(
+        """
+        INSERT INTO activity_log
+        (milestone_id, event_type, details)
+        VALUES (?, ?, ?)
+        """,
+        (milestone_id, event_type, details)
+    )
 
 
 class ProjectCreate(BaseModel):
@@ -365,9 +388,32 @@ def list_work_reviews(milestone_id: int):
 # DEMO ONLY: These routes do not yet authenticate
 # the client. Never use for live payments.
 
+def verify_client_pin(pin: str):
+    expected = os.getenv("CLIENT_APPROVAL_PIN", "")
+
+    if len(expected) < 8:
+        raise HTTPException(
+            status_code=503,
+            detail="Client demo PIN not configured"
+        )
+
+    if not secrets.compare_digest(pin, expected):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid client demo PIN"
+        )
+
 @app.post("/api/milestones/{milestone_id}/approve")
-def approve_milestone(milestone_id: int):
+def approve_milestone(
+    milestone_id: int,
+    x_client_pin: str = Header(default="")
+):
+    verify_client_pin(x_client_pin)
     with database() as db:
+        record_activity(
+            db, milestone_id, "approved",
+            "Client approved milestone for Sandbox checkout"
+        )
         milestone = db.execute(
             "SELECT * FROM milestones WHERE id = ?",
             (milestone_id,)
@@ -412,8 +458,16 @@ def approve_milestone(milestone_id: int):
 
 
 @app.post("/api/milestones/{milestone_id}/checkout")
-def start_checkout(milestone_id: int):
+def start_checkout(
+    milestone_id: int,
+    x_client_pin: str = Header(default="")
+):
+    verify_client_pin(x_client_pin)
     with database() as db:
+        record_activity(
+            db, milestone_id, "checkout_created",
+            "PayPal Sandbox checkout created"
+        )
         milestone = db.execute(
             "SELECT * FROM milestones WHERE id = ?",
             (milestone_id,)
@@ -490,8 +544,16 @@ def start_checkout(milestone_id: int):
 
 
 @app.post("/api/milestones/{milestone_id}/capture")
-def capture_payment(milestone_id: int):
+def capture_payment(
+    milestone_id: int,
+    x_client_pin: str = Header(default="")
+):
+    verify_client_pin(x_client_pin)
     with database() as db:
+        record_activity(
+            db, milestone_id, "payment_captured",
+            "PayPal Sandbox payment verified and captured"
+        )
         payment = db.execute(
             "SELECT * FROM paypal_orders WHERE milestone_id = ?",
             (milestone_id,)
@@ -589,3 +651,33 @@ def dashboard():
         / "index.html"
     )
     return FileResponse(frontend)
+
+
+@app.get("/api/projects/{project_id}/activity")
+def get_project_activity(project_id: int):
+    with database() as db:
+        project = db.execute(
+            "SELECT id FROM projects WHERE id = ?",
+            (project_id,)
+        ).fetchone()
+
+        if project is None:
+            raise HTTPException(404, "Project not found")
+
+        rows = db.execute("""
+            SELECT
+                a.id,
+                a.milestone_id,
+                m.title AS milestone_title,
+                a.event_type,
+                a.details,
+                a.created_at
+            FROM activity_log a
+            JOIN milestones m
+                ON a.milestone_id = m.id
+            WHERE m.project_id = ?
+            ORDER BY a.id DESC
+            LIMIT 50
+        """, (project_id,)).fetchall()
+
+    return [dict(row) for row in rows]
