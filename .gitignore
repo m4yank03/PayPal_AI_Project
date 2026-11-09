@@ -4,3 +4,10 @@ __pycache__/
 *.pyc
 *.db
 .DS_Store
+.env.*
+!.env.example
+*.db-*
+*.sqlite*
+.pytest_cache/
+test-results/
+playwright-report/

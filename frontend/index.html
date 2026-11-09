@@ -848,7 +848,7 @@ label {
               </button>
 
               <a id="approvalLink" class="payment-link"
-                target="_blank" rel="noopener" hidden>
+                rel="noopener" hidden>
                 ↗ Open PayPal Sandbox Checkout
               </a>
 
@@ -880,6 +880,7 @@ label {
 let selectedMilestone = null;
 let milestones = [];
 let gridApi = null;
+let paymentBusy = false;
 
 const $ = id => document.getElementById(id);
 const money = value => "$" + Number(value || 0).toFixed(2);
@@ -911,19 +912,25 @@ async function api(path, method = "GET", body = null, pin = null) {
     headers["X-Client-Pin"] = pin;
   }
 
-  const response = await fetch(path, {
-    method,
-    headers,
-    ...(body !== null ? {body:JSON.stringify(body)} : {})
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers,
+      ...(body !== null ? {body:JSON.stringify(body)} : {})
+    });
+  } catch {
+    throw new Error("Cannot reach TrustPay. Check your connection and retry. If you were capturing a payment, retry verification for the same milestone.");
+  }
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
-      response.status + ": " +
-      (typeof data.detail === "string" ? data.detail : "Request failed")
-    );
+    const detail = typeof data.detail === "string" ? data.detail
+      : Array.isArray(data.detail) ? data.detail.map(item =>
+          item.loc.slice(1).join(" · ") + ": " + item.msg).join("; ")
+      : "The server could not complete the request. Please retry.";
+    throw new Error(response.status + ": " + detail);
   }
   return data;
 }
@@ -931,8 +938,8 @@ async function api(path, method = "GET", body = null, pin = null) {
 async function run(action, success = "Operation completed successfully.") {
   try {
     notify("Processing request...");
-    await action();
-    notify(success);
+    const result = await action();
+    if (result !== false) notify(typeof result === "string" ? result : success);
   } catch (err) {
     notify(err.message, true);
   }
@@ -1001,6 +1008,7 @@ function initGrid() {
     paginationPageSize:10,
     onRowClicked:event => {
       selectedMilestone = event.data;
+      $("approvalLink").hidden = true;
       renderDetails();
       loadReviews().catch(err => notify(err.message,true));
     }
@@ -1057,7 +1065,7 @@ function updateStats() {
   $("progressText").textContent = percent + "%";
 }
 
-async function loadProjects(preferredId = null) {
+async function loadProjects(preferredId = null, preferredMilestoneId = null) {
   const projects = await api("/api/projects");
   $("projectCount").textContent = projects.length;
 
@@ -1076,10 +1084,10 @@ async function loadProjects(preferredId = null) {
     select.value = String(previous);
   }
 
-  await loadMilestones();
+  await loadMilestones(preferredMilestoneId);
 }
 
-async function loadMilestones() {
+async function loadMilestones(preferredId = null) {
   const projectId = $("projectSelect").value;
 
 const rows = projectId
@@ -1110,7 +1118,7 @@ milestones = await Promise.all(
   updateGrid();
   updateStats();
 
-  const oldId = selectedMilestone?.id;
+  const oldId = preferredId ?? selectedMilestone?.id;
   selectedMilestone =
     milestones.find(m => m.id === oldId) ||
     milestones[0] || null;
@@ -1128,9 +1136,9 @@ function renderDetails() {
 
   const m = selectedMilestone;
 
-  $("approveBtn").disabled = !m || m.status !== "pending";
-  $("checkoutBtn").disabled = !m || m.status !== "approved";
-  $("captureBtn").disabled = !m || m.status !== "approved";
+  $("approveBtn").disabled = paymentBusy || !m || m.status !== "pending";
+  $("checkoutBtn").disabled = paymentBusy || !m || m.status !== "approved";
+  $("captureBtn").disabled = paymentBusy || !m || m.status !== "approved";
 
   if (!m) {
     target.className = "selected-empty";
@@ -1267,73 +1275,74 @@ $("reviewForm").addEventListener("submit",event => {
   },"AI work review completed and saved.");
 });
 
-$("approveBtn").addEventListener("click",() => {
-  run(async () => {
-    if (!selectedMilestone) return;
-
-    if (!confirm(
-      "Approve this milestone for Sandbox checkout?"
-    )) return;
-    const pin = prompt("Enter Client Demo PIN:");
-if (pin === null) return;
-
-    await api(
-      "/api/milestones/" + selectedMilestone.id + "/approve",
-      "POST"
-    );
-
+async function refreshAfterPayment(message) {
+  try {
     await loadMilestones();
-  },"Milestone approved for Sandbox payment.");
-});
+  } catch {
+    return message + " Dashboard refresh failed; reload to see the saved status.";
+  }
+  return message;
+}
 
-$("checkoutBtn").addEventListener("click",() => {
-  run(async () => {
-    if (!selectedMilestone) return;
-    const pin = prompt("Enter Client Demo PIN:");
-if (pin === null) return;
-    const result = await api(
-      "/api/milestones/" + selectedMilestone.id + "/checkout",
-      "POST"
-    );
+async function paymentAction(action, confirmation = null) {
+  if (paymentBusy || !selectedMilestone) return;
+  // Snapshot selection before any asynchronous work or user navigation.
+  const milestoneId = selectedMilestone.id;
+  if (confirmation && !confirm(confirmation)) {
+    notify("Action cancelled. No request was sent.");
+    return;
+  }
+  const pin = prompt("Enter Client Demo PIN:");
+  if (pin === null) {
+    notify("Action cancelled. No request was sent.");
+    return;
+  }
+  if (!pin.trim()) {
+    notify("Enter your Client Demo PIN to continue.", true);
+    return;
+  }
+  // Keep the PIN only in this request's memory, never in storage or URLs.
+  paymentBusy = true;
+  renderDetails();
+  try {
+    await run(() => action(milestoneId, pin));
+  } finally {
+    paymentBusy = false;
+    renderDetails();
+  }
+}
 
-    const url = new URL(result.approval_url);
+$("approveBtn").addEventListener("click", () => paymentAction(async (id, pin) => {
+  await api("/api/milestones/" + id + "/approve", "POST", null, pin);
+  return refreshAfterPayment("Milestone approved for Sandbox payment.");
+}, "Approve this milestone for Sandbox checkout?"));
 
-    if (
-      url.protocol !== "https:" ||
-      !(
-        url.hostname === "paypal.com" ||
-        url.hostname.endsWith(".paypal.com")
-      )
-    ) {
-      throw new Error("Unexpected PayPal checkout URL.");
-    }
+$("checkoutBtn").addEventListener("click", () => paymentAction(async (id, pin) => {
+  $("approvalLink").hidden = true;
+  const result = await api("/api/milestones/" + id + "/checkout", "POST", null, pin);
+  let url;
+  try {
+    url = new URL(result.approval_url);
+  } catch {
+    throw new Error("PayPal did not return a valid Sandbox checkout link.");
+  }
+  if (url.protocol !== "https:" || url.hostname !== "www.sandbox.paypal.com"
+      || (url.port && url.port !== "443") || url.username || url.password) {
+    throw new Error("Unexpected checkout URL. Only PayPal Sandbox checkout is allowed.");
+  }
+  const link = $("approvalLink");
+  link.href = url.href;
+  link.hidden = false;
+  notify("Opening PayPal Sandbox. After buyer approval, return to this dashboard to verify and capture payment.");
+  // Same-tab navigation avoids popup blockers. The link remains as a fallback.
+  window.location.assign(url.href);
+  return false;
+}));
 
-    const link = $("approvalLink");
-    link.href = url.href;
-    link.hidden = false;
-    await loadActivity();
-  },"Checkout ready. Open the PayPal link to approve payment.");
-});
-
-$("captureBtn").addEventListener("click",() => {
-  run(async () => {
-    if (!selectedMilestone) return;
-
-    if (!confirm(
-      "Has the Sandbox buyer approved the payment?"
-    )) return;
-    const pin = prompt("Enter Client Demo PIN:");
-if (pin === null) return;
-    const result = await api(
-      "/api/milestones/" + selectedMilestone.id + "/capture",
-      "POST"
-    );
-
-    await loadMilestones();
-
-    notify("Payment verified! Capture ID: " + result.capture_id);
-  },"Sandbox payment captured and verified.");
-});
+$("captureBtn").addEventListener("click", () => paymentAction(async (id, pin) => {
+  const result = await api("/api/milestones/" + id + "/capture", "POST", null, pin);
+  return refreshAfterPayment("Sandbox payment verified! Capture ID: " + result.capture_id);
+}, "Has the Sandbox buyer approved the payment?"));
 
 
 async function loadActivity() {
@@ -1390,8 +1399,18 @@ async function loadActivity() {
 async function start() {
   try {
     initGrid();
-    await loadProjects();
-    notify("TrustPay AI connected successfully.");
+    const params = new URLSearchParams(window.location.search);
+    const paypal = params.get("paypal");
+    const projectId = Number(params.get("project_id")) || null;
+    const milestoneId = Number(params.get("milestone_id")) || null;
+    await loadProjects(projectId, milestoneId);
+    if (paypal === "returned") {
+      notify("Returned from PayPal Sandbox. Buyer approval is not payment confirmation. Select the correct milestone, then Verify & Capture Payment and enter your Client Demo PIN.");
+    } else if (paypal === "cancelled") {
+      notify("PayPal Sandbox checkout cancelled. No payment status was changed. You can reopen checkout for the selected milestone.");
+    } else {
+      notify("TrustPay AI connected successfully.");
+    }
   } catch (err) {
     notify(err.message,true);
   }

@@ -1,6 +1,8 @@
 from pathlib import Path
 import sqlite3
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
+from html import escape
+from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
 import json
@@ -10,15 +12,23 @@ from paypal.client import (
     create_paypal_order,
     capture_paypal_order,
     PayPalError,
+    validate_approval_url,
 )
 from fastapi.responses import HTMLResponse
 from fastapi.responses import FileResponse
 import os
 import secrets
-from fastapi import Header
 
-DB = Path(__file__).resolve().parent / 'trustpay.db'
-app = FastAPI(title='TrustPay AI', version='0.1.0')
+DB = Path(os.getenv("TRUSTPAY_DB_PATH", Path(__file__).resolve().parent / "trustpay.db"))
+
+
+@asynccontextmanager
+async def lifespan(app):
+    initialize_database()
+    yield
+
+
+app = FastAPI(title='TrustPay AI', version='0.1.0', lifespan=lifespan)
 
 @contextmanager
 def database():
@@ -27,76 +37,80 @@ def database():
     try:
         yield conn
         conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
-with database() as db:
-    db.execute('''CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        description TEXT NOT NULL,
-        budget_usd REAL NOT NULL CHECK(budget_usd > 0),
-        status TEXT NOT NULL DEFAULT 'draft'
-    )''')
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS milestones (
+def initialize_database():
+    with database() as db:
+        db.execute('''CREATE TABLE IF NOT EXISTS projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
             title TEXT NOT NULL,
             description TEXT NOT NULL,
-            acceptance_criteria TEXT NOT NULL,
-            percentage INTEGER NOT NULL,
-            amount_usd REAL NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            FOREIGN KEY (project_id) REFERENCES projects(id)
-        )
-    ''')
+            budget_usd REAL NOT NULL CHECK(budget_usd > 0),
+            status TEXT NOT NULL DEFAULT 'draft'
+        )''')
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS milestones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                acceptance_criteria TEXT NOT NULL,
+                percentage INTEGER NOT NULL,
+                amount_usd REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                FOREIGN KEY (project_id) REFERENCES projects(id)
+            )
+        ''')
 
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS submissions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            milestone_id INTEGER NOT NULL,
-            evidence_text TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (milestone_id)
-                REFERENCES milestones(id)
-        )
-    """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                milestone_id INTEGER NOT NULL,
+                evidence_text TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (milestone_id)
+                    REFERENCES milestones(id)
+            )
+        """)
 
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS reviews (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            submission_id INTEGER NOT NULL UNIQUE,
-            summary TEXT NOT NULL,
-            recommendation TEXT NOT NULL,
-            criteria_results TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (submission_id)
-                REFERENCES submissions(id)
-        )
-    """)
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS paypal_orders (
-            milestone_id INTEGER PRIMARY KEY,
-            order_id TEXT NOT NULL UNIQUE,
-            approval_url TEXT NOT NULL,
-            amount_usd REAL NOT NULL,
-            status TEXT NOT NULL DEFAULT 'created',
-            capture_id TEXT UNIQUE,
-            FOREIGN KEY (milestone_id)
-                REFERENCES milestones(id)
-        )
-    """)
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS activity_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            milestone_id INTEGER NOT NULL,
-            event_type TEXT NOT NULL,
-            details TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (milestone_id) REFERENCES milestones(id)
-        )
-    """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                submission_id INTEGER NOT NULL UNIQUE,
+                summary TEXT NOT NULL,
+                recommendation TEXT NOT NULL,
+                criteria_results TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (submission_id)
+                    REFERENCES submissions(id)
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS paypal_orders (
+                milestone_id INTEGER PRIMARY KEY,
+                order_id TEXT NOT NULL UNIQUE,
+                approval_url TEXT NOT NULL,
+                amount_usd REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'created',
+                capture_id TEXT UNIQUE,
+                FOREIGN KEY (milestone_id)
+                    REFERENCES milestones(id)
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS activity_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                milestone_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                details TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (milestone_id) REFERENCES milestones(id)
+            )
+        """)
 
 def record_activity(db, milestone_id, event_type, details):
     db.execute(
@@ -397,251 +411,220 @@ def verify_client_pin(pin: str):
             detail="Client demo PIN not configured"
         )
 
-    if not secrets.compare_digest(pin, expected):
+    if not secrets.compare_digest(pin.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(
             status_code=403,
             detail="Invalid client demo PIN"
         )
 
 @app.post("/api/milestones/{milestone_id}/approve")
-def approve_milestone(
-    milestone_id: int,
-    x_client_pin: str = Header(default="")
-):
+def approve_milestone(milestone_id: int, x_client_pin: str = Header(default="")):
     verify_client_pin(x_client_pin)
     with database() as db:
-        record_activity(
-            db, milestone_id, "approved",
-            "Client approved milestone for Sandbox checkout"
-        )
+        db.execute("BEGIN IMMEDIATE")
         milestone = db.execute(
-            "SELECT * FROM milestones WHERE id = ?",
-            (milestone_id,)
+            "SELECT * FROM milestones WHERE id = ?", (milestone_id,)
         ).fetchone()
-
         if milestone is None:
             raise HTTPException(404, "Milestone not found")
-
         if milestone["status"] == "approved":
-            return {
-                "milestone_id": milestone_id,
-                "status": "approved"
-            }
-
+            return {"milestone_id": milestone_id, "status": "approved"}
         if milestone["status"] != "pending":
-            raise HTTPException(
-                409, "Milestone cannot be approved"
-            )
-
+            raise HTTPException(409, "Only a pending milestone can be approved.")
         review_count = db.execute("""
-            SELECT COUNT(*)
-            FROM reviews
-            JOIN submissions ON
-                reviews.submission_id = submissions.id
+            SELECT COUNT(*) FROM reviews
+            JOIN submissions ON reviews.submission_id = submissions.id
             WHERE submissions.milestone_id = ?
         """, (milestone_id,)).fetchone()[0]
-
         if review_count == 0:
-            raise HTTPException(
-                409, "Milestone needs an AI review first"
-            )
+            raise HTTPException(409, "Submit work for an AI review before approving this milestone.")
+        db.execute("UPDATE milestones SET status = 'approved' WHERE id = ?", (milestone_id,))
+        record_activity(db, milestone_id, "approved", "Client approved milestone for Sandbox checkout")
+    return {"milestone_id": milestone_id, "status": "approved"}
 
-        db.execute(
-            "UPDATE milestones SET status = ? WHERE id = ?",
-            ("approved", milestone_id)
-        )
 
+def checkout_response(order):
+    # Validate stored orders too; older rows may contain a non-Sandbox link.
+    try:
+        validate_approval_url(order["approval_url"])
+    except PayPalError as exc:
+        raise HTTPException(502, str(exc)) from exc
     return {
-        "milestone_id": milestone_id,
-        "status": "approved"
+        "order_id": order["order_id"],
+        "approval_url": order["approval_url"],
+        "amount_usd": order["amount_usd"],
+        "status": "awaiting_buyer_approval",
     }
+
+
+def require_checkout_milestone(db, milestone_id):
+    milestone = db.execute("SELECT * FROM milestones WHERE id = ?", (milestone_id,)).fetchone()
+    if milestone is None:
+        raise HTTPException(404, "Milestone not found")
+    if milestone["status"] == "paid":
+        raise HTTPException(409, "This milestone is already paid.")
+    if milestone["status"] != "approved":
+        raise HTTPException(409, "Approve this milestone before opening PayPal Sandbox checkout.")
+    return milestone
 
 
 @app.post("/api/milestones/{milestone_id}/checkout")
-def start_checkout(
-    milestone_id: int,
-    x_client_pin: str = Header(default="")
-):
+def start_checkout(milestone_id: int, x_client_pin: str = Header(default="")):
     verify_client_pin(x_client_pin)
     with database() as db:
-        record_activity(
-            db, milestone_id, "checkout_created",
-            "PayPal Sandbox checkout created"
-        )
-        milestone = db.execute(
-            "SELECT * FROM milestones WHERE id = ?",
-            (milestone_id,)
-        ).fetchone()
-
-        if milestone is None:
-            raise HTTPException(404, "Milestone not found")
-
-        if milestone["status"] == "paid":
-            raise HTTPException(409, "Already paid")
-
+        milestone = require_checkout_milestone(db, milestone_id)
         existing = db.execute(
-            "SELECT * FROM paypal_orders WHERE milestone_id = ?",
-            (milestone_id,)
+            "SELECT * FROM paypal_orders WHERE milestone_id = ?", (milestone_id,)
         ).fetchone()
-
     if existing:
-        return {
-            "order_id": existing["order_id"],
-            "approval_url": existing["approval_url"],
-            "amount_usd": existing["amount_usd"]
-        }
+        return checkout_response(existing)
 
-    if milestone["status"] != "approved":
-        raise HTTPException(
-            409, "Client must approve milestone first"
-        )
-
+    # Network calls run outside SQLite write transactions. The PayPal client
+    # uses a stable request ID so retries refer to the same Sandbox order.
     try:
-        order = create_paypal_order(
-            milestone_id,
-            milestone["amount_usd"]
-        )
+        order = create_paypal_order(milestone_id, milestone["amount_usd"])
     except PayPalError as exc:
-        print(f"PayPal order error: {exc}")
-        raise HTTPException(
-            502, "PayPal order creation failed"
-        ) from exc
-
+        raise HTTPException(502, str(exc)) from exc
     order_id = order.get("id")
-
+    links = order.get("links", [])
+    if not isinstance(links, list):
+        links = []
     approval_url = next(
-        (
-            link["href"]
-            for link in order.get("links", [])
-            if link.get("rel") in ("payer-action", "approve")
-        ),
-        None
+        (link.get("href") for link in links
+         if isinstance(link, dict) and link.get("rel") in ("payer-action", "approve")),
+        None,
     )
-
-    if not order_id or not approval_url:
-        raise HTTPException(
-            502, "PayPal returned no approval link"
-        )
-
+    if not isinstance(order_id, str) or not order_id or not approval_url:
+        raise HTTPException(502, "PayPal did not return a checkout link. Retry Sandbox checkout.")
+    response = checkout_response({
+        "order_id": order_id, "approval_url": approval_url, "amount_usd": milestone["amount_usd"]
+    })
     with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        require_checkout_milestone(db, milestone_id)
+        # Another request may have saved the order while PayPal was responding.
+        existing = db.execute(
+            "SELECT * FROM paypal_orders WHERE milestone_id = ?", (milestone_id,)
+        ).fetchone()
+        if existing:
+            return checkout_response(existing)
         db.execute("""
-            INSERT INTO paypal_orders
-            (milestone_id, order_id, approval_url, amount_usd)
+            INSERT INTO paypal_orders (milestone_id, order_id, approval_url, amount_usd)
             VALUES (?, ?, ?, ?)
-        """, (
-            milestone_id,
-            order_id,
-            approval_url,
-            milestone["amount_usd"]
-        ))
+        """, (milestone_id, order_id, approval_url, milestone["amount_usd"]))
+        record_activity(db, milestone_id, "checkout_created", "PayPal Sandbox checkout created")
+    return response
 
+
+def paid_response(payment, already_paid=False):
     return {
-        "order_id": order_id,
-        "approval_url": approval_url,
-        "amount_usd": milestone["amount_usd"],
-        "status": "awaiting_buyer_approval"
+        "status": "paid", "milestone_id": payment["milestone_id"],
+        "order_id": payment["order_id"], "capture_id": payment["capture_id"],
+        "amount_usd": payment["amount_usd"], "already_paid": already_paid,
     }
 
 
-@app.post("/api/milestones/{milestone_id}/capture")
-def capture_payment(
-    milestone_id: int,
-    x_client_pin: str = Header(default="")
-):
-    verify_client_pin(x_client_pin)
-    with database() as db:
-        record_activity(
-            db, milestone_id, "payment_captured",
-            "PayPal Sandbox payment verified and captured"
-        )
-        payment = db.execute(
-            "SELECT * FROM paypal_orders WHERE milestone_id = ?",
-            (milestone_id,)
-        ).fetchone()
-
-    if payment is None:
-        raise HTTPException(404, "Checkout not created")
-
-    if payment["status"] == "paid":
-        return {
-            "status": "paid",
-            "capture_id": payment["capture_id"],
-            "already_paid": True
-        }
-
-    try:
-        result = capture_paypal_order(payment["order_id"])
-    except PayPalError as exc:
-        print(f"PayPal capture error: {exc}")
-        raise HTTPException(
-            502, "Payment capture failed"
-        ) from exc
-
-    units = result.get("purchase_units", [])
-    captures = (
-        units[0].get("payments", {}).get("captures", [])
-        if units else []
-    )
-
-    capture = next(
-        (c for c in captures
-         if c.get("status") == "COMPLETED"),
-        None
-    )
-
-    expected_amount = f"{payment['amount_usd']:.2f}"
-
+def verified_capture(result, payment):
+    units = result.get("purchase_units")
+    if not isinstance(units, list) or len(units) != 1 or not isinstance(units[0], dict):
+        return None
+    payments = units[0].get("payments")
+    captures = payments.get("captures") if isinstance(payments, dict) else None
+    if not isinstance(captures, list) or len(captures) != 1 or not isinstance(captures[0], dict):
+        return None
+    capture = captures[0]
+    amount = capture.get("amount")
     if (
         result.get("id") != payment["order_id"]
         or result.get("status") != "COMPLETED"
-        or capture is None
-        or not capture.get("id")
-        or capture.get("amount", {}).get("currency_code") != "USD"
-        or capture.get("amount", {}).get("value") != expected_amount
+        or capture.get("status") != "COMPLETED"
+        or not isinstance(capture.get("id"), str) or not capture["id"]
+        or not isinstance(amount, dict)
+        or amount.get("currency_code") != "USD"
+        or amount.get("value") != f"{payment['amount_usd']:.2f}"
     ):
-        raise HTTPException(
-            502, "Payment not confirmed as completed"
-        )
+        return None
+    return capture
 
+
+@app.post("/api/milestones/{milestone_id}/capture")
+def capture_payment(milestone_id: int, x_client_pin: str = Header(default="")):
+    verify_client_pin(x_client_pin)
     with database() as db:
+        payment = db.execute(
+            "SELECT * FROM paypal_orders WHERE milestone_id = ?", (milestone_id,)
+        ).fetchone()
+        if payment is None:
+            raise HTTPException(404, "Create a PayPal Sandbox checkout before verifying payment.")
+        if payment["status"] == "paid":
+            return paid_response(payment, already_paid=True)
+        require_checkout_milestone(db, milestone_id)
+    try:
+        result = capture_paypal_order(payment["order_id"])
+    except PayPalError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    capture = verified_capture(result, payment)
+    if capture is None:
+        raise HTTPException(502, "PayPal has not confirmed the expected USD payment as completed. No local payment status was changed; verify the Sandbox order before retrying capture.")
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        current = db.execute(
+            "SELECT * FROM paypal_orders WHERE milestone_id = ?", (milestone_id,)
+        ).fetchone()
+        if current is None or current["order_id"] != payment["order_id"]:
+            raise HTTPException(409, "Checkout changed during verification. Refresh the dashboard.")
+        if current["status"] == "paid":
+            return paid_response(current, already_paid=True)
+        require_checkout_milestone(db, milestone_id)
         db.execute("""
-            UPDATE paypal_orders
-            SET status = 'paid', capture_id = ?
-            WHERE milestone_id = ?
+            UPDATE paypal_orders SET status = 'paid', capture_id = ? WHERE milestone_id = ?
         """, (capture["id"], milestone_id))
+        db.execute("UPDATE milestones SET status = 'paid' WHERE id = ?", (milestone_id,))
+        record_activity(db, milestone_id, "payment_captured", "PayPal Sandbox payment verified and captured")
+    return paid_response({**dict(payment), "capture_id": capture["id"]})
 
-        db.execute("""
-            UPDATE milestones
-            SET status = 'paid'
-            WHERE id = ?
-        """, (milestone_id,))
 
-    return {
-        "status": "paid",
-        "milestone_id": milestone_id,
-        "order_id": payment["order_id"],
-        "capture_id": capture["id"],
-        "amount_usd": payment["amount_usd"]
-    }
+def paypal_landing(cancelled, token, milestone_id):
+    # The callback only restores dashboard context; it never confirms payment.
+    with database() as db:
+        if token:
+            milestone = db.execute("""
+                SELECT m.id, m.project_id FROM milestones m
+                JOIN paypal_orders p ON p.milestone_id = m.id WHERE p.order_id = ?
+            """, (token,)).fetchone()
+        elif milestone_id is not None:
+            milestone = db.execute("SELECT id, project_id FROM milestones WHERE id = ?", (milestone_id,)).fetchone()
+        else:
+            milestone = None
+    params = {"paypal": "cancelled" if cancelled else "returned"}
+    if milestone:
+        params.update(project_id=milestone["project_id"], milestone_id=milestone["id"])
+    dashboard_url = escape("/?" + urlencode(params) + "#payments", quote=True)
+    title = "Sandbox checkout cancelled" if cancelled else "Returned from PayPal Sandbox"
+    message = (
+        "Checkout was cancelled. No payment status was changed. You can reopen checkout from the dashboard."
+        if cancelled else
+        "Buyer approval alone does not mark this milestone paid. Return to the dashboard, select Verify &amp; Capture Payment, and enter your Client Demo PIN."
+    )
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{title} — TrustPay AI</title>
+    <style>body{{font:17px/1.6 system-ui;background:#f6f8fc;color:#18243a;margin:0;padding:8vh 24px}}
+    main{{max-width:640px;margin:auto;padding:32px;background:white;border-radius:16px}}
+    a{{display:inline-block;background:#476df5;color:white;padding:12px 20px;border-radius:8px;text-decoration:none}}</style>
+    </head><body><main><p>TrustPay AI · Sandbox only</p><h1>{title}</h1><p>{message}</p>
+    <a href="{dashboard_url}">Return to dashboard</a></main></body></html>"""
 
 
 @app.get("/api/paypal/return", response_class=HTMLResponse)
-def paypal_return():
-    return """
-    <h2>PayPal Sandbox approval received</h2>
-    <p>Return to the API docs and run the
-    milestone capture endpoint to verify payment.</p>
-    <a href="/docs">Open TrustPay API Docs</a>
-    """
+def paypal_return(token: str | None = None, milestone_id: int | None = None):
+    return paypal_landing(False, token, milestone_id)
 
 
 @app.get("/api/paypal/cancel", response_class=HTMLResponse)
-def paypal_cancel():
-    return """
-    <h2>Sandbox checkout cancelled</h2>
-    <p>No payment has been marked as paid.</p>
-    <a href="/docs">Open TrustPay API Docs</a>
-    """
+def paypal_cancel(token: str | None = None, milestone_id: int | None = None):
+    return paypal_landing(True, token, milestone_id)
+
 
 @app.get("/", include_in_schema=False)
 def dashboard():
