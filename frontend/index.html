@@ -929,8 +929,12 @@ async function api(path, method = "GET", body = null, pin = null) {
     const detail = typeof data.detail === "string" ? data.detail
       : Array.isArray(data.detail) ? data.detail.map(item =>
           item.loc.slice(1).join(" · ") + ": " + item.msg).join("; ")
+      : typeof data.detail?.message === "string" ? data.detail.message
       : "The server could not complete the request. Please retry.";
-    throw new Error(response.status + ": " + detail);
+    const error = new Error(response.status + ": " + detail);
+    error.code = data.detail?.code;
+    error.orderId = data.detail?.order_id;
+    throw error;
   }
   return data;
 }
@@ -1319,7 +1323,25 @@ $("approveBtn").addEventListener("click", () => paymentAction(async (id, pin) =>
 
 $("checkoutBtn").addEventListener("click", () => paymentAction(async (id, pin) => {
   $("approvalLink").hidden = true;
-  const result = await api("/api/milestones/" + id + "/checkout", "POST", null, pin);
+  const path = "/api/milestones/" + id + "/checkout";
+  let result;
+  try {
+    result = await api(path, "POST", null, pin);
+  } catch (error) {
+    if (error.code !== "checkout_unavailable" || typeof error.orderId !== "string") {
+      throw error;
+    }
+    const restart = confirm(
+      "PayPal can no longer open this saved Sandbox checkout.\n\n" +
+      "Create a fresh Sandbox checkout? The old order will be preserved.\n\n" +
+      "If you already paid, choose Cancel and verify the old order first."
+    );
+    if (!restart) {
+      notify("Checkout replacement cancelled. The saved order was kept.");
+      return false;
+    }
+    result = await api(path, "POST", {replace_order_id: error.orderId}, pin);
+  }
   let url;
   try {
     url = new URL(result.approval_url);
@@ -1368,6 +1390,7 @@ async function loadActivity() {
   const labels = {
     approved: "Milestone Approved",
     checkout_created: "PayPal Checkout Created",
+    checkout_recreated: "Sandbox Checkout Recreated",
     payment_captured: "Sandbox Payment Completed"
   };
 

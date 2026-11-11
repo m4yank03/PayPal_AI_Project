@@ -1,7 +1,7 @@
 
 import os
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 from dotenv import load_dotenv
@@ -13,6 +13,44 @@ BASE_URL = "https://api-m.sandbox.paypal.com"
 
 class PayPalError(Exception):
     pass
+
+
+class PayPalOrderUnavailable(PayPalError):
+    """PayPal explicitly reports that the saved order cannot be found."""
+
+
+def get_paypal_order(order_id):
+    token = access_token()
+    try:
+        response = httpx.get(
+            f"{BASE_URL}/v2/checkout/orders/{quote(order_id, safe='')}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=25,
+        )
+    except httpx.RequestError as exc:
+        raise PayPalError(
+            "Cannot verify the saved Sandbox checkout. Please retry; no replacement was created."
+        ) from exc
+
+    if response.status_code == 404:
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and data.get("name") == "RESOURCE_NOT_FOUND":
+            details = data.get("details")
+            if isinstance(details, list) and any(
+                isinstance(detail, dict) and detail.get("issue") == "INVALID_RESOURCE_ID"
+                for detail in details
+            ):
+                raise PayPalOrderUnavailable(
+                    "PayPal can no longer find this saved Sandbox checkout."
+                )
+
+    order = paypal_response(response)
+    if order.get("id") != order_id:
+        raise PayPalError("PayPal returned a different order. No replacement was created.")
+    return order
 
 
 def validate_approval_url(url):
@@ -101,7 +139,7 @@ def access_token():
         raise PayPalError("Cannot connect to PayPal Sandbox. Please retry.") from exc
 
 
-def create_paypal_order(milestone_id, amount_usd):
+def create_paypal_order(milestone_id, amount_usd, request_id=None):
     base = app_base_url()
     token = access_token()
 
@@ -136,7 +174,7 @@ def create_paypal_order(milestone_id, amount_usd):
             headers={
                 "Authorization": f"Bearer {token}",
                 "PayPal-Request-Id":
-                    f"trustpay-create-{milestone_id}",
+                    request_id or f"trustpay-create-{milestone_id}",
             },
             json=payload,
             timeout=25,

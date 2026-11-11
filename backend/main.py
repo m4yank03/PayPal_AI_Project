@@ -3,6 +3,7 @@ import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from html import escape
 from urllib.parse import urlencode
+from uuid import NAMESPACE_URL, uuid5
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
 import json
@@ -11,7 +12,9 @@ from ai.work_reviewer import review_work
 from paypal.client import (
     create_paypal_order,
     capture_paypal_order,
+    get_paypal_order,
     PayPalError,
+    PayPalOrderUnavailable,
     validate_approval_url,
 )
 from fastapi.responses import HTMLResponse
@@ -468,23 +471,101 @@ def require_checkout_milestone(db, milestone_id):
     return milestone
 
 
+class CheckoutRequest(BaseModel):
+    # Bind explicit replacement consent to the exact unavailable order.
+    replace_order_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+def checkout_replacement_reason(payment):
+    if payment["status"] != "created" or payment["capture_id"] is not None:
+        raise HTTPException(409, "This checkout has payment activity. Verify its status before proceeding.")
+    try:
+        order = get_paypal_order(payment["order_id"])
+    except PayPalOrderUnavailable:
+        return "unavailable"
+    except PayPalError as exc:
+        raise HTTPException(502, str(exc)) from exc
+
+    if order.get("status") == "VOIDED":
+        return "voided"
+    if order.get("status") == "COMPLETED":
+        raise HTTPException(409, "PayPal reports this order is already completed. Do not create another payment; reconcile the saved order first.")
+    if order.get("status") == "APPROVED":
+        raise HTTPException(409, "The Sandbox buyer already approved this order. Select Verify & Capture Payment.")
+    if order.get("status") not in ("CREATED", "PAYER_ACTION_REQUIRED"):
+        raise HTTPException(502, "PayPal returned an unexpected order status. No replacement was created.")
+    return None
+
+
+def archive_checkout(db, payment, replacement_id, reason):
+    # Additive, on-demand table: retain every field of the previous active row.
+    # This DDL, archive, active-row update and activity entry share one transaction.
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS paypal_order_history (
+            order_id TEXT PRIMARY KEY,
+            milestone_id INTEGER NOT NULL,
+            approval_url TEXT NOT NULL,
+            amount_usd REAL NOT NULL,
+            status TEXT NOT NULL,
+            capture_id TEXT,
+            replacement_order_id TEXT NOT NULL,
+            replacement_reason TEXT NOT NULL,
+            archived_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    db.execute("""
+        INSERT INTO paypal_order_history
+            (order_id, milestone_id, approval_url, amount_usd, status, capture_id,
+             replacement_order_id, replacement_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        payment["order_id"], payment["milestone_id"], payment["approval_url"],
+        payment["amount_usd"], payment["status"], payment["capture_id"],
+        replacement_id, reason,
+    ))
+
+
 @app.post("/api/milestones/{milestone_id}/checkout")
-def start_checkout(milestone_id: int, x_client_pin: str = Header(default="")):
+def start_checkout(
+    milestone_id: int,
+    x_client_pin: str = Header(default=""),
+    request: CheckoutRequest | None = None,
+):
     verify_client_pin(x_client_pin)
     with database() as db:
         milestone = require_checkout_milestone(db, milestone_id)
         existing = db.execute(
             "SELECT * FROM paypal_orders WHERE milestone_id = ?", (milestone_id,)
         ).fetchone()
-    if existing:
-        return checkout_response(existing)
 
-    # Network calls run outside SQLite write transactions. The PayPal client
-    # uses a stable request ID so retries refer to the same Sandbox order.
+    replacement_reason = None
+    if existing:
+        replacement_reason = checkout_replacement_reason(existing)
+        if replacement_reason is None:
+            return checkout_response(existing)
+        if request is None or request.replace_order_id != existing["order_id"]:
+            raise HTTPException(409, detail={
+                "code": "checkout_unavailable",
+                "order_id": existing["order_id"],
+                "message": "The saved Sandbox checkout is no longer available. A fresh checkout needs your confirmation. If you already paid, cancel and verify the old order first.",
+            })
+    elif request is not None and request.replace_order_id:
+        raise HTTPException(409, "The saved checkout changed. Refresh the dashboard before continuing.")
+
+    # Stable per old order, distinct from the original create request, and only
+    # 32 characters. A timeout or local rollback retries the same replacement.
+    request_id = (
+        uuid5(NAMESPACE_URL, "trustpay-sandbox-replacement:" + existing["order_id"]).hex
+        if replacement_reason else None
+    )
     try:
-        order = create_paypal_order(milestone_id, milestone["amount_usd"])
+        if request_id:
+            order = create_paypal_order(milestone_id, milestone["amount_usd"], request_id=request_id)
+        else:
+            order = create_paypal_order(milestone_id, milestone["amount_usd"])
     except PayPalError as exc:
         raise HTTPException(502, str(exc)) from exc
+
     order_id = order.get("id")
     links = order.get("links", [])
     if not isinstance(links, list):
@@ -496,23 +577,43 @@ def start_checkout(milestone_id: int, x_client_pin: str = Header(default="")):
     )
     if not isinstance(order_id, str) or not order_id or not approval_url:
         raise HTTPException(502, "PayPal did not return a checkout link. Retry Sandbox checkout.")
+    if replacement_reason and order_id == existing["order_id"]:
+        raise HTTPException(502, "PayPal returned the unavailable order again. No local records were changed.")
     response = checkout_response({
         "order_id": order_id, "approval_url": approval_url, "amount_usd": milestone["amount_usd"]
     })
+
     with database() as db:
         db.execute("BEGIN IMMEDIATE")
         require_checkout_milestone(db, milestone_id)
-        # Another request may have saved the order while PayPal was responding.
-        existing = db.execute(
+        current = db.execute(
             "SELECT * FROM paypal_orders WHERE milestone_id = ?", (milestone_id,)
         ).fetchone()
-        if existing:
-            return checkout_response(existing)
-        db.execute("""
-            INSERT INTO paypal_orders (milestone_id, order_id, approval_url, amount_usd)
-            VALUES (?, ?, ?, ?)
-        """, (milestone_id, order_id, approval_url, milestone["amount_usd"]))
-        record_activity(db, milestone_id, "checkout_created", "PayPal Sandbox checkout created")
+        if replacement_reason:
+            if current is None:
+                raise HTTPException(409, "Checkout changed during replacement. Refresh the dashboard.")
+            if current["order_id"] != existing["order_id"]:
+                return checkout_response(current)
+            if current["status"] != "created" or current["capture_id"] is not None:
+                raise HTTPException(409, "Checkout payment status changed. No replacement was saved.")
+            archive_checkout(db, current, order_id, replacement_reason)
+            db.execute("""
+                UPDATE paypal_orders
+                SET order_id = ?, approval_url = ?, amount_usd = ?, status = 'created', capture_id = NULL
+                WHERE milestone_id = ?
+            """, (order_id, approval_url, milestone["amount_usd"], milestone_id))
+            record_activity(
+                db, milestone_id, "checkout_recreated",
+                "Unavailable Sandbox checkout replaced; previous order preserved in payment history."
+            )
+        else:
+            if current:
+                return checkout_response(current)
+            db.execute("""
+                INSERT INTO paypal_orders (milestone_id, order_id, approval_url, amount_usd)
+                VALUES (?, ?, ?, ?)
+            """, (milestone_id, order_id, approval_url, milestone["amount_usd"]))
+            record_activity(db, milestone_id, "checkout_created", "PayPal Sandbox checkout created")
     return response
 
 
