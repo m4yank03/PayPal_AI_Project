@@ -18,6 +18,7 @@ def isolated_app(tmp_path, monkeypatch):
         pytest.fail("Tests must mock PayPal/Gemini; no external service calls are allowed")
 
     monkeypatch.setattr("paypal.client.httpx.post", unexpected)
+    monkeypatch.setattr("paypal.client.httpx.get", unexpected)
     monkeypatch.setattr(main, "generate_milestones", unexpected)
     monkeypatch.setattr(main, "review_work", unexpected)
     main.initialize_database()
@@ -58,6 +59,7 @@ def paypal(monkeypatch):
             "id": "TEST-CAPTURE", "status": "COMPLETED", "amount": {"currency_code": "USD", "value": "10.00"}
         }]}}]
     })
+    monkeypatch.setattr(main, "get_paypal_order", Mock(return_value={"id": ORDER_ID, "status": "PAYER_ACTION_REQUIRED"}))
     monkeypatch.setattr(main, "create_paypal_order", create)
     monkeypatch.setattr(main, "capture_paypal_order", capture)
     return create, capture

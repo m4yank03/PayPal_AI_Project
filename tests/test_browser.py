@@ -171,3 +171,78 @@ def test_validation_errors_show_field_and_message(page, dashboard):
     dialogs(page)
     page.locator("#approveBtn").click()
     expect(page.locator("#notice")).to_contain_text("budget_usd: Input should be greater than 0")
+
+
+@pytest.mark.parametrize("confirm_replacement", [True, False])
+def test_unavailable_checkout_confirmation_flow(page, dashboard, client, seeded, paypal, monkeypatch, confirm_replacement):
+    from backend import main
+    from paypal.client import PayPalOrderUnavailable
+
+    ready_checkout(page, client, seeded)
+    assert client.post(f"/api/milestones/{seeded[1]}/checkout", headers=HEADERS).status_code == 200
+    paypal[0].reset_mock()
+    new_id = "BROWSER-REPLACEMENT"
+    new_url = "https://www.sandbox.paypal.com/checkoutnow?token=" + new_id
+    paypal[0].return_value = {"id": new_id, "links": [{"rel": "payer-action", "href": new_url}]}
+
+    def missing(*args):
+        raise PayPalOrderUnavailable("Saved order unavailable")
+
+    monkeypatch.setattr(main, "get_paypal_order", missing)
+    confirmations = []
+
+    def handle(dialog):
+        if dialog.type == "prompt":
+            dialog.accept(PIN)
+        else:
+            confirmations.append(dialog.message)
+            dialog.accept() if confirm_replacement else dialog.dismiss()
+
+    page.on("dialog", handle)
+    page.locator("#checkoutBtn").click()
+    if confirm_replacement:
+        expect(page).to_have_url(new_url)
+        assert len(dashboard) == 2
+        assert dashboard[1].post_data_json == {"replace_order_id": ORDER_ID}
+        with main.database() as db:
+            assert db.execute("SELECT order_id FROM paypal_order_history").fetchone()[0] == ORDER_ID
+            assert db.execute("SELECT order_id FROM paypal_orders").fetchone()[0] == new_id
+        assert client.get(f"/api/projects/{seeded[0]}/activity").json()[0]["event_type"] == "checkout_recreated"
+    else:
+        expect(page.locator("#notice")).to_contain_text("replacement cancelled")
+        expect(page).to_have_url(ORIGIN + "/")
+        assert len(dashboard) == 1
+        paypal[0].assert_not_called()
+        with main.database() as db:
+            assert db.execute("SELECT order_id FROM paypal_orders").fetchone()[0] == ORDER_ID
+    assert len(confirmations) == 1 and "If you already paid" in confirmations[0]
+    for request in dashboard:
+        assert request.headers["x-client-pin"] == PIN
+        assert PIN not in (request.post_data or "") and PIN not in request.url
+    paypal[1].assert_not_called()
+
+
+def test_checkout_lookup_failure_does_not_offer_replacement(page, dashboard, client, seeded, monkeypatch):
+    from backend import main
+    from paypal.client import PayPalError
+
+    ready_checkout(page, client, seeded)
+    client.post(f"/api/milestones/{seeded[1]}/checkout", headers=HEADERS)
+
+    def unavailable(*args):
+        raise PayPalError("Cannot verify saved checkout. Please retry.")
+
+    monkeypatch.setattr(main, "get_paypal_order", unavailable)
+    confirmations = []
+
+    def handle(dialog):
+        if dialog.type == "prompt":
+            dialog.accept(PIN)
+        else:
+            confirmations.append(dialog.message)
+            dialog.dismiss()
+
+    page.on("dialog", handle)
+    page.locator("#checkoutBtn").click()
+    expect(page.locator("#notice")).to_contain_text("Cannot verify saved checkout")
+    assert confirmations == [] and len(dashboard) == 1
